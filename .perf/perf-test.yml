@@ -1,0 +1,4 @@
+- path: /api/products
+  method: GET
+  users: 20
+  duration: 30
