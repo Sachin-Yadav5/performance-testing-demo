@@ -1,0 +1,9 @@
+{
+  "name": "perf-pipeline-tools",
+  "private": true,
+  "version": "1.0.0",
+  "dependencies": {
+    "clinic": "^13.0.0",
+    "js-yaml": "^4.1.0"
+  }
+}

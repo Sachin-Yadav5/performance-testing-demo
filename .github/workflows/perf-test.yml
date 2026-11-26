@@ -1,0 +1,137 @@
+name: PR Performance Test
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  JMETER_VERSION: "5.6.3"
+  PORT: "3000"
+  PERF_MAX_APIS: "20"          # ek PR me max kitni APIs test ho sakti hain
+  PERF_MAX_TOTAL_USERS: "500"  # sab APIs ke users ka total (ek saath parallel chalte hain)
+
+jobs:
+  perf:
+    # Auto-run: PR description me ```perf block ho ya `perf-test` label ho. Koi manual step nahi.
+    # (Block na mile to parse step quietly skip kar deta hai.)
+    if: >
+      (contains(github.event.pull_request.labels.*.name, 'perf-test') ||
+       contains(github.event.pull_request.body, '```perf')) &&
+      (github.event.action != 'labeled' || github.event.label.name == 'perf-test')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 20
+
+      - name: Install config parser dep
+        run: npm install --prefix .perf js-yaml --no-save --no-audit --no-fund
+
+      - name: Parse perf config
+        id: cfg
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          HAS_LABEL: ${{ contains(github.event.pull_request.labels.*.name, 'perf-test') }}
+        run: node .perf/scripts/parse-config.js
+
+      - uses: actions/setup-java@v5
+        if: steps.cfg.outputs.valid == 'true'
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: Install perf tooling deps (Clinic.js)
+        if: steps.cfg.outputs.valid == 'true'
+        run: npm install --prefix .perf --no-audit --no-fund
+
+      - name: Install app dependencies and build
+        if: steps.cfg.outputs.valid == 'true'
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm run build --if-present
+
+      - name: Cache JMeter
+        if: steps.cfg.outputs.valid == 'true'
+        id: jmcache
+        uses: actions/cache@v4
+        with:
+          path: apache-jmeter-${{ env.JMETER_VERSION }}
+          key: jmeter-${{ env.JMETER_VERSION }}
+
+      - name: Install JMeter
+        if: steps.cfg.outputs.valid == 'true'
+        run: |
+          if [ "${{ steps.jmcache.outputs.cache-hit }}" != "true" ]; then
+            curl -fsSL --retry 5 --retry-delay 5 "https://archive.apache.org/dist/jmeter/binaries/apache-jmeter-${JMETER_VERSION}.tgz" | tar xz
+          fi
+          echo "$PWD/apache-jmeter-${JMETER_VERSION}/bin" >> "$GITHUB_PATH"
+
+      - name: Generate JMeter test plan
+        if: steps.cfg.outputs.valid == 'true'
+        run: node .perf/scripts/generate-jmx.js
+
+      - name: Run app under Clinic.js and load test with JMeter
+        id: run
+        if: steps.cfg.outputs.valid == 'true'
+        continue-on-error: true
+        run: bash .perf/scripts/run.sh
+
+      - name: Analyze results (JMeter + Clinic.js metrics)
+        if: always() && steps.cfg.outputs.valid == 'true'
+        run: node .perf/scripts/analyze.js
+
+      - name: Upload JMeter HTML report
+        id: up_jmeter
+        if: always() && steps.cfg.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jmeter-html-report
+          path: |
+            .perf/out/jmeter-report
+            .perf/out/results.jtl
+          if-no-files-found: ignore
+
+      - name: Upload Clinic.js report
+        id: up_clinic
+        if: always() && steps.cfg.outputs.skip != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: clinic-cpu-report
+          path: .perf/out/clinic
+          if-no-files-found: ignore
+
+      - name: Write job summary
+        if: always() && steps.cfg.outputs.skip != 'true'
+        env:
+          JMETER_ARTIFACT_URL: ${{ steps.up_jmeter.outputs.artifact-url }}
+          CLINIC_ARTIFACT_URL: ${{ steps.up_clinic.outputs.artifact-url }}
+        run: node .perf/scripts/write-job-summary.js
+
+      - name: Notify Slack
+        if: always() && steps.cfg.outputs.skip != 'true'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          JMETER_ARTIFACT_URL: ${{ steps.up_jmeter.outputs.artifact-url }}
+          CLINIC_ARTIFACT_URL: ${{ steps.up_clinic.outputs.artifact-url }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: node .perf/scripts/notify-slack.js
+
+      - name: Fail job if thresholds breached
+        if: always() && steps.cfg.outputs.skip != 'true'
+        run: node .perf/scripts/check-status.js
