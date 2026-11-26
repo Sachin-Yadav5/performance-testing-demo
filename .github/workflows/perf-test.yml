@@ -1,10 +1,8 @@
-# Ye file company ki har repo me lagti hai. Isme kuch edit karne ki zaroorat nahi.
-# Saari logic central repo (Sachin-Yadav5/perf-pipeline) me hai; wahan update hone par yahan apne aap lagta hai.
 name: PR Performance Test
 
 on:
   pull_request:
-    types: [opened, edited, synchronize, reopened, labeled]
+    types: [opened, edited, synchronize, reopened]
 
 permissions:
   contents: read
@@ -15,11 +13,8 @@ concurrency:
 
 jobs:
   perf:
-    # PR description me ```perf block ho (ya `perf-test` label) tabhi chalta hai, warna skip.
-    if: >
-      (contains(github.event.pull_request.labels.*.name, 'perf-test') ||
-       contains(github.event.pull_request.body, '```perf')) &&
-      (github.event.action != 'labeled' || github.event.label.name == 'perf-test')
+    # Runs only when the PR description contains a ```perf block.
+    if: contains(github.event.pull_request.body, '```perf')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
