@@ -62,7 +62,13 @@ const apis = cfg.apis.map((a) => {
   const avg = el.reduce((t, v) => t + v, 0) / el.length;
   const errors = s.filter((x) => !x.ok).length;
   const errorRate = (errors / s.length) * 100;
-  const span = (Math.max(...s.map((x) => x.ts + x.elapsed)) - Math.min(...s.map((x) => x.ts))) / 1000;
+  let tMin = Infinity;
+  let tMax = -Infinity;
+  for (const x of s) { // spread (...) lakhon samples par stack overflow deta hai, isliye loop
+    if (x.ts < tMin) tMin = x.ts;
+    if (x.ts + x.elapsed > tMax) tMax = x.ts + x.elapsed;
+  }
+  const span = (tMax - tMin) / 1000;
   if (avg > a.max_avg_response_time) reasons.push(`avg ${round(avg, 0)}ms > ${a.max_avg_response_time}ms`);
   if (errorRate > a.max_error_rate) reasons.push(`errors ${round(errorRate, 2)}% > ${a.max_error_rate}%`);
   return {

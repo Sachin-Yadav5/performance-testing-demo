@@ -35,10 +35,11 @@ async function readClinicMetrics(clinicDir) {
   const cpu = rows.map((r) => r.cpu * 100); // clinic cpu ko fraction me rakhta hai
   const mem = rows.map((r) => r.memory.rss / 1024 / 1024);
   const avg = (a) => a.reduce((t, v) => t + v, 0) / a.length;
+  const max = (a) => a.reduce((m, v) => (v > m ? v : m), -Infinity);
   return {
     samples: rows.length,
-    cpu: { avg: round(avg(cpu)), peak: round(Math.max(...cpu)) },
-    memory: { avg: round(avg(mem)), peak: round(Math.max(...mem)) },
+    cpu: { avg: round(avg(cpu)), peak: round(max(cpu)) },
+    memory: { avg: round(avg(mem)), peak: round(max(mem)) },
   };
 }
 
